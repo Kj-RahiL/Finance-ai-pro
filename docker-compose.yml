@@ -1,0 +1,25 @@
+# FinanceAI Pro — local Postgres for development.
+# Usage:  docker compose up -d db
+# Then in server/.env:
+#   DATABASE_URL=postgresql+asyncpg://financeai:financeai@localhost:5432/financeai
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: financeai-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: financeai
+      POSTGRES_PASSWORD: financeai
+      POSTGRES_DB: financeai
+    ports:
+      - "5432:5432"
+    volumes:
+      - financeai_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U financeai -d financeai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  financeai_pgdata:

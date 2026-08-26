@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-950 text-slate-100 antialiased;
+}
+
+/* Subtle app-wide background gradient. */
+body {
+  background-image: radial-gradient(
+      60rem 60rem at 110% -10%,
+      rgba(79, 70, 229, 0.15),
+      transparent 60%
+    ),
+    radial-gradient(50rem 50rem at -10% 110%, rgba(16, 185, 129, 0.1), transparent 60%);
+  background-attachment: fixed;
+}

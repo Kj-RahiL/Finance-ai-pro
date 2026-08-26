@@ -1,0 +1,42 @@
+# ---- Python / FastAPI (server/) ----
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local SQLite dev/test databases
+*.db
+*.sqlite3
+
+# Environment files (never commit secrets)
+.env
+.env.*
+!.env.example
+
+# ---- Node / Next.js (client/) ----
+node_modules/
+.next/
+out/
+build/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+
+# Client env
+.env.local
+.env.development.local
+.env.production.local
+!.env.local.example
+
+# ---- Editors / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

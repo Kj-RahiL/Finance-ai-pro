@@ -1,0 +1,26 @@
+# ---- Web framework ----
+fastapi>=0.115,<0.116
+uvicorn[standard]>=0.30,<0.35
+
+# ---- Database (async SQLAlchemy 2.0) ----
+sqlalchemy[asyncio]>=2.0.30,<2.1
+asyncpg>=0.29          # Postgres async driver (default DATABASE_URL)
+aiosqlite>=0.20        # SQLite async driver (zero-install fallback)
+alembic>=1.13,<2.0
+
+# ---- Config / validation ----
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3,<3.0
+email-validator>=2.1   # enables pydantic EmailStr
+
+# ---- Auth ----
+bcrypt>=4.1            # password hashing (used directly; no passlib shim)
+PyJWT>=2.8,<3.0        # JWT access tokens
+
+# ---- AI ----
+anthropic>=0.40        # Claude API SDK
+
+# ---- Dev / test ----
+pytest>=8.2
+pytest-asyncio>=0.23
+httpx>=0.27            # ASGI test client
