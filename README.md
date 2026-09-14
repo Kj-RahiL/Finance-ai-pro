@@ -39,6 +39,11 @@ Finance-ai-pro/
 
 ---
 
+The server and client are independent processes — run each in its own terminal
+(they're also built and deployed separately, see *Deploy*).
+
+---
+
 ## 1. Backend (`server/`)
 
 ### a. Start Postgres (optional — SQLite works without it)
@@ -66,8 +71,9 @@ cp .env.example .env
 ```
 
 Then edit `.env`:
-- `DATABASE_URL` — leave as Postgres if you ran Docker; or switch to the commented
-  SQLite line for zero setup.
+- `DATABASE_URL` — leave as Postgres if you ran Docker; switch to the commented
+  SQLite line for zero setup; or paste a Supabase **Session pooler** URI (see *Deploy* —
+  the *Direct* host is IPv6-only and won't resolve on most home connections).
 - `JWT_SECRET` — set a long random value (the server warns on startup if you don't).
 - `ANTHROPIC_API_KEY` — paste your key to enable AI categorization (optional).
 
@@ -219,6 +225,50 @@ client/src/
 ├── features/<name>/ # api.ts + hooks.ts + components/ per feature
 └── lib/             # api-client, types (mirror server schemas), format, query-keys
 ```
+
+---
+
+## Deploy
+
+The two halves deploy to different hosts, each to the platform that runs it best:
+
+| Part | Host | Why |
+|---|---|---|
+| `client/` (Next.js) | **Vercel** | Zero-config Next.js, free tier, CDN, preview deploys per PR |
+| `server/` (FastAPI) | **Render** | Native Python web services, `render.yaml` blueprint in this repo |
+| Postgres | **Supabase** | Free managed Postgres with a good dashboard (Render's own Postgres works too) |
+
+> SQLite is for local dev only — hosted disks are ephemeral. Production needs Postgres.
+
+**1. Database on Supabase** — *New project* (region: Singapore) → set a DB password.
+Then **Connect** (top bar) → *Connection string* → pick **Session pooler** (port 5432) and copy:
+```
+postgresql://postgres.<ref>:[YOUR-PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
+```
+- Use the *Session pooler*, not *Direct* (IPv6-only, Render can't reach it) and not
+  *Transaction pooler* (port 6543 — breaks asyncpg's prepared statements).
+- If your password has `@ # / %` etc., URL-encode it (`@` → `%40`).
+- The app rewrites `postgresql://` → `postgresql+asyncpg://` itself; paste the link as-is.
+
+**2. Server on Render** — Dashboard → *New* → *Blueprint* → select this repo. Render reads
+[`render.yaml`](render.yaml): generates `JWT_SECRET` and runs `alembic upgrade head` before
+every start. It prompts you for:
+- `DATABASE_URL` — the Supabase link from step 1
+- `ANTHROPIC_API_KEY`
+- `CORS_ORIGINS` — set this to your Vercel URL *after* step 3 (e.g. `https://financeai-pro.vercel.app`)
+
+Note the API URL it gives you, e.g. `https://financeai-api.onrender.com`.
+
+**3. Client on Vercel** — *Add New Project* → import the repo → **Root Directory: `client`**
+(framework auto-detects as Next.js). Add one environment variable:
+```
+NEXT_PUBLIC_API_URL=https://financeai-api.onrender.com
+```
+Deploy, then copy the Vercel URL back into Render's `CORS_ORIGINS`.
+
+**Alternatives:** Railway runs both the server and Postgres with no cold starts (Render's
+free tier sleeps after 15 min idle — fine for demos, ~30 s first request). Fly.io works
+too. Keep the client on Vercel regardless — nothing beats it for Next.js.
 
 ---
 

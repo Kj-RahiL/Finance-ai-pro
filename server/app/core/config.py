@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -41,6 +42,30 @@ class Settings(BaseSettings):
 
     # CORS — comma-separated origins
     CORS_ORIGINS: str = "http://localhost:3000"
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _normalize_postgres_url(cls, url: str) -> str:
+        """Make a hosted-Postgres URL (Render, Neon, Supabase, Heroku) usable as-is.
+
+        - `postgres://` / `postgresql://` → `postgresql+asyncpg://` (async driver)
+        - libpq-only query params: `sslmode=…` → `ssl=…`; `channel_binding` dropped
+          (asyncpg rejects them as unknown connect() kwargs)
+        """
+        for prefix in ("postgres://", "postgresql://"):
+            if url.startswith(prefix):
+                url = "postgresql+asyncpg://" + url[len(prefix):]
+        if not url.startswith("postgresql+asyncpg://") or "?" not in url:
+            return url
+
+        parts = urlsplit(url)
+        query = []
+        for key, value in parse_qsl(parts.query, keep_blank_values=True):
+            if key == "sslmode":
+                query.append(("ssl", value))
+            elif key != "channel_binding":
+                query.append((key, value))
+        return urlunsplit(parts._replace(query=urlencode(query)))
 
     @property
     def cors_origins_list(self) -> list[str]:
