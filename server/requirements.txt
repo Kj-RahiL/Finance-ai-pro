@@ -18,7 +18,7 @@ bcrypt>=4.1            # password hashing (used directly; no passlib shim)
 PyJWT>=2.8,<3.0        # JWT access tokens
 
 # ---- AI ----
-anthropic>=0.40        # Claude API SDK
+anthropic>=1.0,<2.0    # Claude API SDK (1.x: messages.parse + output_config)
 
 # ---- Dev / test ----
 pytest>=8.2

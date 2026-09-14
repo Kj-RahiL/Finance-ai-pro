@@ -3,8 +3,8 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-import { useAuth } from "@/lib/auth-store";
-import { Spinner } from "@/components/ui";
+import { FullScreenSpinner } from "@/components/ui";
+import { useAuth } from "@/features/auth/store";
 
 export default function Home() {
   const router = useRouter();
@@ -13,12 +13,8 @@ export default function Home() {
 
   useEffect(() => {
     if (!hydrated) return;
-    router.replace(token ? "/transactions" : "/login");
+    router.replace(token ? "/dashboard" : "/login");
   }, [hydrated, token, router]);
 
-  return (
-    <div className="grid min-h-screen place-items-center text-slate-400">
-      <Spinner />
-    </div>
-  );
+  return <FullScreenSpinner />;
 }

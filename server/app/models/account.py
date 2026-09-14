@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import enum
-from datetime import datetime, timezone
+from decimal import Decimal
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Numeric, String
+from sqlalchemy import Boolean, Enum, ForeignKey, Numeric, String, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+from app.models.base import CreatedAtMixin
 
 
 class AccountType(str, enum.Enum):
@@ -21,7 +18,7 @@ class AccountType(str, enum.Enum):
     savings = "savings"
 
 
-class Account(Base):
+class Account(CreatedAtMixin, Base):
     __tablename__ = "accounts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -32,9 +29,13 @@ class Account(Base):
     type: Mapped[AccountType] = mapped_column(
         Enum(AccountType), default=AccountType.cash, nullable=False
     )
-    balance: Mapped[float] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    # Running balance, maintained by the transactions service (never edited directly).
+    balance: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="BDT", nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # Soft delete: closed accounts keep their history but accept no new transactions.
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
 
     user: Mapped["User"] = relationship(back_populates="accounts")
     transactions: Mapped[list["Transaction"]] = relationship(

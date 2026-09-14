@@ -39,9 +39,16 @@ async def test_register_login_and_ai_categorized_transaction(client):
     # It shows up in the list.
     resp = await client.get("/transactions", headers=headers)
     assert resp.status_code == 200
-    items = resp.json()
-    assert len(items) == 1
-    assert items[0]["description"] == "KFC"
+    page = resp.json()
+    assert page["total"] == 1
+    assert page["items"][0]["description"] == "KFC"
+
+
+async def test_register_rejects_duplicate_email(client):
+    payload = {"email": "dup@example.com", "password": "secret1", "name": "D"}
+    assert (await client.post("/auth/register", json=payload)).status_code == 201
+    resp = await client.post("/auth/register", json=payload)
+    assert resp.status_code == 409
 
 
 async def test_login_rejects_bad_password(client):

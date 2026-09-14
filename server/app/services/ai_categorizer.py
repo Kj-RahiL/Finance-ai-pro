@@ -1,46 +1,24 @@
 """AI transaction categorization via the Claude API.
 
 Design goals:
-- Constrain Claude's answer to the seeded category set so it maps 1:1 to a row.
+- Constrain Claude's answer to the caller-supplied category set (structured
+  output with a Literal enum) so the result maps 1:1 to a DB row.
 - Never break the request path: any missing key / API error / bad output
-  degrades gracefully to the "Other" category with ai_suggested=False.
+  degrades to `None`, and the caller applies its own fallback category.
 """
 from __future__ import annotations
 
-import json
 import logging
+from decimal import Decimal
+from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field
+import anthropic
+from pydantic import BaseModel, Field, create_model
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-
-# (name, type, icon) — the single source of truth for seeding + the AI's choices.
-DEFAULT_CATEGORIES: list[tuple[str, str, str]] = [
-    ("Food", "expense", "🍔"),
-    ("Transport", "expense", "🚗"),
-    ("Shopping", "expense", "🛍️"),
-    ("Bills", "expense", "🧾"),
-    ("Entertainment", "expense", "🎬"),
-    ("Health", "expense", "💊"),
-    ("Income", "income", "💵"),
-    ("Other", "expense", "❓"),
-]
-CATEGORY_NAMES: list[str] = [name for name, _type, _icon in DEFAULT_CATEGORIES]
-FALLBACK_CATEGORY = "Other"
-
-# Literal type mirrors CATEGORY_NAMES so Claude can only pick a valid category.
-CategoryName = Literal[
-    "Food", "Transport", "Shopping", "Bills", "Entertainment", "Health", "Income", "Other"
-]
-
-
-class CategorySuggestion(BaseModel):
-    category: CategoryName = Field(description="Best-fit category for the transaction.")
-    confidence: float = Field(ge=0, le=1, description="0–1 confidence in the choice.")
-
 
 _SYSTEM_PROMPT = (
     "You categorize personal-finance transactions for a Bangladeshi budgeting app. "
@@ -50,90 +28,75 @@ _SYSTEM_PROMPT = (
     "'bazar'/restaurant names are Food. Be decisive; use 'Other' only when nothing fits."
 )
 
-# Lazily-constructed async client so importing this module never requires a key.
-_client = None
+# Lazily-constructed client so importing this module never requires a key.
+_client: anthropic.AsyncAnthropic | None = None
 
 
-def _get_client():
+def _get_client() -> anthropic.AsyncAnthropic:
     global _client
     if _client is None:
-        from anthropic import AsyncAnthropic
-
-        _client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        _client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
     return _client
 
 
-def _json_schema() -> dict:
-    return {
-        "type": "object",
-        "properties": {
-            "category": {"type": "string", "enum": CATEGORY_NAMES},
-            "confidence": {"type": "number"},
-        },
-        "required": ["category", "confidence"],
-        "additionalProperties": False,
-    }
-
-
-async def _ask_claude(user_prompt: str) -> tuple[str, float]:
-    """Call Claude and return (category, confidence). Raises on failure."""
-    client = _get_client()
-
-    # Preferred path: typed structured output via messages.parse().
-    parse = getattr(client.messages, "parse", None)
-    if parse is not None:
-        response = await client.messages.parse(
-            model=settings.ANTHROPIC_MODEL,
-            max_tokens=256,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
-            output_format=CategorySuggestion,
-        )
-        parsed = response.parsed_output
-        if parsed is not None:
-            return parsed.category, parsed.confidence
-
-    # Fallback: raw json_schema output for SDKs without .parse().
-    response = await client.messages.create(
-        model=settings.ANTHROPIC_MODEL,
-        max_tokens=256,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_prompt}],
-        output_config={"format": {"type": "json_schema", "schema": _json_schema()}},
+@lru_cache(maxsize=32)
+def _suggestion_model(allowed: tuple[str, ...]) -> type[BaseModel]:
+    """Pydantic model whose `category` is a Literal of `allowed` — Claude cannot answer outside it."""
+    return create_model(
+        "CategorySuggestion",
+        category=(Literal[allowed], Field(description="Best-fit category for the transaction.")),
+        confidence=(float, Field(ge=0, le=1, description="0-1 confidence in the choice.")),
     )
-    text = next(block.text for block in response.content if block.type == "text")
-    data = json.loads(text)
-    return data["category"], float(data.get("confidence", 0.0))
 
 
-async def categorize_transaction(
-    description: str, amount: float, txn_type: str
-) -> tuple[str, bool]:
-    """Return (category_name, ai_suggested).
+async def suggest_category(
+    *,
+    description: str,
+    amount: Decimal,
+    txn_type: str,
+    allowed: tuple[str, ...],
+) -> tuple[str, float] | None:
+    """Ask Claude for (category_name, confidence), or None when AI is unavailable/failed.
 
-    ai_suggested is True only when Claude produced a valid categorization.
-    On any failure we fall back to ("Other", False) — the caller never sees an error.
+    `category_name` is guaranteed to be one of `allowed`.
     """
     if not settings.ANTHROPIC_API_KEY:
         logger.info("ANTHROPIC_API_KEY not set — skipping AI categorization.")
-        return FALLBACK_CATEGORY, False
+        return None
+    if not allowed:
+        return None
 
     user_prompt = (
         f'Transaction description: "{description}"\n'
         f"Amount: {amount} BDT\n"
         f"Type: {txn_type}\n"
+        f"Allowed categories: {', '.join(allowed)}\n"
         "Categorize this transaction."
     )
 
     try:
-        category, confidence = await _ask_claude(user_prompt)
-    except Exception as exc:  # noqa: BLE001 — degrade gracefully on any AI failure
-        logger.warning("AI categorization failed (%s); using fallback.", exc)
-        return FALLBACK_CATEGORY, False
+        response = await _get_client().messages.parse(
+            model=settings.ANTHROPIC_MODEL,
+            max_tokens=256,
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+            output_format=_suggestion_model(allowed),
+        )
+    except anthropic.RateLimitError:
+        logger.warning("AI categorization rate-limited; using fallback.")
+        return None
+    except anthropic.APIStatusError as exc:
+        logger.warning("AI categorization API error %s (%s); using fallback.", exc.status_code, exc.type)
+        return None
+    except anthropic.APIConnectionError as exc:
+        logger.warning("AI categorization connection error (%s); using fallback.", exc)
+        return None
+    except Exception:  # noqa: BLE001 — last resort: the request path must never 500 on AI issues
+        logger.exception("Unexpected AI categorization failure; using fallback.")
+        return None
 
-    if category not in CATEGORY_NAMES:
-        logger.warning("AI returned unknown category %r; using fallback.", category)
-        return FALLBACK_CATEGORY, False
-
-    logger.info("AI categorized %r as %s (confidence=%.2f).", description, category, confidence)
-    return category, True
+    parsed = response.parsed_output
+    if parsed is None:
+        logger.warning("AI returned no structured output (stop_reason=%s); using fallback.", response.stop_reason)
+        return None
+    return parsed.category, parsed.confidence

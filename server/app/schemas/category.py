@@ -12,3 +12,4 @@ class CategoryOut(BaseModel):
     name: str
     type: CategoryType
     icon: str
+    is_default: bool

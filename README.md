@@ -2,11 +2,12 @@
 
 AI-powered personal finance manager. Log transactions in plain language
 (`KFC 550`) and Claude auto-categorizes them — saved to Postgres, shown in a
-Next.js UI with an **✨ AI suggested** badge.
+Next.js UI with an **✨ AI suggested** badge that you can correct.
 
-This repo is a **full-stack scaffold + one complete vertical slice**
-(register/login → add transaction → AI category → list). It's structured to
-grow into the larger platform (budgets, receipts, RAG chat, etc.).
+This repo implements **Phase 1 of the blueprint** (`FinanceAI_Pro_Project_Analysis.pdf`):
+Auth, Accounts, Categories, Transaction CRUD with AI categorization, running
+balances, and a monthly dashboard summary. It's structured to grow into the
+later phases (receipts, budgets, RAG chat, ML prediction).
 
 ```
 Finance-ai-pro/
@@ -15,19 +16,25 @@ Finance-ai-pro/
 └── client/                # Next.js (App Router) + Tailwind + Framer Motion + TanStack Query
 ```
 
+> **Architecture note.** The blueprint describes a Node.js backend plus a
+> separate Python ML microservice. This implementation uses a single Python
+> FastAPI backend for both application logic and AI — one language, one
+> deploy, and the ML/forecasting work (Phase 3) can live in the same service
+> or be split out later behind the same REST boundary.
+
 ## Stack
 
 | Layer     | Tech |
 |-----------|------|
 | Backend   | Python 3.11+, FastAPI, SQLAlchemy 2.0 (async, `asyncpg`), Alembic, PyJWT, bcrypt |
-| AI        | Anthropic Claude via the `anthropic` SDK (structured outputs) |
+| AI        | Anthropic Claude via the `anthropic` SDK 1.x (structured outputs) |
 | Database  | Postgres 16 (Docker) — or zero-install SQLite fallback |
 | Frontend  | Next.js 15, TypeScript, Tailwind CSS, Framer Motion, TanStack Query, Zustand, React Hook Form + Zod |
 
 ## Prerequisites
 
 - **Python 3.11+**, **Node.js 18+**, and (optional) **Docker Desktop** for Postgres.
-- An **Anthropic API key** for the AI feature — *optional*: without one, transactions
+- An **Anthropic API key** for the AI feature — *optional*: without one, expenses
   still save and are categorized as `Other` (graceful degradation).
 
 ---
@@ -61,7 +68,7 @@ cp .env.example .env
 Then edit `.env`:
 - `DATABASE_URL` — leave as Postgres if you ran Docker; or switch to the commented
   SQLite line for zero setup.
-- `JWT_SECRET` — set a long random value.
+- `JWT_SECRET` — set a long random value (the server warns on startup if you don't).
 - `ANTHROPIC_API_KEY` — paste your key to enable AI categorization (optional).
 
 ### d. Run
@@ -80,8 +87,10 @@ uvicorn app.main:app --reload
 pytest
 ```
 
-The smoke test runs the whole slice against an isolated SQLite DB with the AI
-call stubbed — no network or API key needed.
+22 tests run the whole API against an isolated SQLite DB with the AI call
+stubbed — no network or API key needed. They cover auth, account CRUD +
+archive, balance bookkeeping on create/update/delete, AI vs. explicit vs.
+fallback categories, filters/pagination, per-user isolation, and the summary.
 
 ---
 
@@ -94,9 +103,30 @@ cp .env.local.example .env.local   # NEXT_PUBLIC_API_URL=http://localhost:8000
 npm run dev
 ```
 
-Open <http://localhost:3000> → register → add an expense like **KFC / 550** →
-watch it appear categorized **Food** with the **✨ AI suggested** badge.
-Try `Uber 300` (→ Transport), `bKash bill 1200` (→ Bills).
+Open <http://localhost:3000> → register → you land on the **Dashboard**.
+Quick-add an expense like **KFC / 550** → it appears categorized **Food** with
+the **✨ AI suggested** badge. Click **Edit** on any transaction to correct the
+category — the badge disappears because the category is now user-confirmed.
+
+Screens: `/dashboard` (month summary, quick add, accounts, recent),
+`/transactions` (filters, paging, edit/delete), `/accounts` (create, edit, archive).
+
+---
+
+## Business rules (server-side)
+
+- **Running balances.** Every transaction adds a signed amount to its account
+  (+income / −expense). Create applies it, delete reverses it, update reverses
+  the old effect and applies the new one — including when moved between accounts.
+- **Type-safe categories.** Expenses can only get expense categories, income only
+  income categories. The AI is offered only the matching set. Fallbacks:
+  expense → `Other`, income → `Income`.
+- **AI is a suggestion.** `ai_suggested=true` only when Claude chose the category.
+  Passing `category_id` on create or update marks it user-chosen (`false`).
+  Changing a transaction's type re-resolves the category.
+- **Soft delete for accounts.** `DELETE /accounts/{id}` archives; archived accounts
+  keep their history, are hidden by default, and refuse new transactions.
+- **Ownership.** Anything belonging to another user is a `404`, never a `403`.
 
 ---
 
@@ -105,8 +135,8 @@ Try `Uber 300` (→ Transport), `bKash bill 1200` (→ Bills).
 The app auto-creates tables on startup for convenience. To manage schema with
 migrations instead:
 
-1. Set `AUTO_CREATE_TABLES=false` in `.env` (so startup doesn't pre-create tables).
-2. Run the bundled initial migration against a fresh database:
+1. Set `AUTO_CREATE_TABLES=false` in `.env`.
+2. Run the migrations against a fresh database:
 
    ```bash
    cd server
@@ -118,54 +148,83 @@ To evolve the schema later, edit the models and autogenerate a revision:
 ```bash
 alembic revision --autogenerate -m "add budgets"
 alembic upgrade head
+alembic check   # confirms models and migrations agree
 ```
 
 > Already created tables with `AUTO_CREATE_TABLES=true` and now want Alembic?
-> Run `alembic stamp head` once to mark the initial migration as applied.
+> Run `alembic stamp head` once to mark the migrations as applied.
 
 ---
 
 ## How the AI categorization works
 
-`server/app/services/ai_categorizer.py`:
+`server/app/services/ai_categorizer.py` + `services/categories.py`:
 
-- Sends the description + amount to Claude and requests a **structured output**
-  constrained to the seeded category set (`messages.parse()` with a Pydantic
-  model, falling back to a raw `json_schema` if needed).
-- Maps the returned category name directly to a `category_id` and stores
-  `ai_suggested=true`.
-- **Never 500s on AI failure:** missing key, API error, or an unexpected answer
-  degrades to `Other` with `ai_suggested=false` (logged as a warning).
+- The categories service loads the categories matching the transaction type and
+  hands their names to the AI service as the **allowed set**.
+- The AI service builds a Pydantic model whose `category` field is a `Literal`
+  of that set and calls `client.messages.parse(..., output_format=Model)` — a
+  structured output, so Claude physically cannot answer outside the set.
+- **Never 500s on AI failure:** missing key, rate limit, API/connection error, or
+  an unparseable answer returns `None` and the caller uses the fallback category
+  with `ai_suggested=false` (logged as a warning).
 
 Model is set by `ANTHROPIC_MODEL` (default `claude-opus-5`). For this
 high-volume classification, `claude-haiku-4-5` is cheaper and plenty capable.
-
-### Resilience check
-
-Blank out `ANTHROPIC_API_KEY`, restart the backend, and add a transaction — it
-saves as `Other` with no error, proving the fallback path.
 
 ---
 
 ## API summary
 
-| Method | Path                | Auth | Purpose |
-|--------|---------------------|------|---------|
-| POST   | `/auth/register`    | –    | Create user (+ default Cash account), return JWT |
-| POST   | `/auth/login`       | –    | Return JWT |
-| GET    | `/auth/me`          | ✓    | Current user |
-| GET    | `/categories`       | ✓    | List seeded categories |
-| GET    | `/transactions`     | ✓    | List the user's transactions (newest first) |
-| POST   | `/transactions`     | ✓    | Create + AI-categorize a transaction |
-| GET    | `/health`           | –    | Liveness check |
+| Method | Path                       | Purpose |
+|--------|----------------------------|---------|
+| POST   | `/auth/register`           | Create user (+ default Cash account), return JWT |
+| POST   | `/auth/login`              | Return JWT |
+| GET    | `/auth/me`                 | Current user |
+| GET    | `/accounts`                | List accounts (`?include_archived=true`) |
+| POST   | `/accounts`                | Create account (with opening balance) |
+| GET    | `/accounts/{id}`           | Get one |
+| PATCH  | `/accounts/{id}`           | Rename / retype / archive-restore |
+| DELETE | `/accounts/{id}`           | Archive (soft delete) |
+| GET    | `/categories`              | List seeded categories |
+| GET    | `/transactions`            | Paged list: `account_id, category_id, type, date_from, date_to, q, limit, offset` |
+| POST   | `/transactions`            | Create (+ AI categorize unless `category_id` given) |
+| GET    | `/transactions/{id}`       | Get one |
+| PATCH  | `/transactions/{id}`       | Partial update (rebalances accounts) |
+| DELETE | `/transactions/{id}`       | Delete (restores balance) |
+| GET    | `/dashboard/summary`       | Income / expense / net for a month + total balance |
+| GET    | `/health`                  | Liveness check |
 
-Auth is JWT Bearer: the client stores the token (Zustand, persisted to
-localStorage) and sends `Authorization: Bearer <token>` on each request.
+All routes except `/auth/*` and `/health` need `Authorization: Bearer <token>`.
 
 ---
 
-## Not yet built (future phases)
+## Code layout
 
-Receipt OCR, RAG chat (pgvector), ML prediction, budgets/alerts, recurring
-payments, dashboard charts, exports, notifications, background jobs, OAuth/MFA.
-The folder structure and data model leave seams to add these.
+```
+server/app/
+├── api/routes/      # thin HTTP handlers, one file per resource
+├── api/errors.py    # DomainError → HTTP status mapping
+├── core/            # config, db, security, domain exceptions
+├── models/          # SQLAlchemy ORM
+├── schemas/         # Pydantic request/response contracts
+└── services/        # business logic (no FastAPI imports) — users, accounts,
+                     # categories, transactions, ai_categorizer
+
+client/src/
+├── app/(auth)/      # /login, /register
+├── app/(app)/       # auth-guarded: /dashboard, /transactions, /accounts
+├── components/ui    # shared primitives (Button, Input, Modal, Badge…)
+├── components/layout/AppShell.tsx
+├── features/<name>/ # api.ts + hooks.ts + components/ per feature
+└── lib/             # api-client, types (mirror server schemas), format, query-keys
+```
+
+---
+
+## Not yet built (later phases)
+
+Transfers (double-entry between accounts), refresh tokens / httpOnly cookies,
+Google OAuth / MFA, custom categories, budgets & alerts, receipt OCR, recurring
+payments & loans, RAG chat, ML prediction, reports/export, notifications,
+background jobs. The service layer and feature folders leave seams for each.

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import type { User } from "./types";
+import type { User } from "@/lib/types";
 
 interface AuthState {
   token: string | null;

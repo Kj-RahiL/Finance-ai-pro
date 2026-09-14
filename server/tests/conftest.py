@@ -4,17 +4,16 @@ import os
 # Must be set before importing app.core.config (settings are cached at import).
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_financeai.db"
 os.environ["ANTHROPIC_API_KEY"] = ""       # ensure no real API calls
-os.environ["JWT_SECRET"] = "test-secret"
+os.environ["JWT_SECRET"] = "test-secret-that-is-long-enough-for-hs256-ok!"
 os.environ["AUTO_CREATE_TABLES"] = "true"
 
 import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 
-import app.api.routes.transactions as txn_routes  # noqa: E402
 from app.core.db import AsyncSessionLocal, Base, engine  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models.category import Category, CategoryType  # noqa: E402
-from app.services.ai_categorizer import DEFAULT_CATEGORIES  # noqa: E402
+from app.services import ai_categorizer  # noqa: E402
+from app.services.categories import seed_default_categories  # noqa: E402
 
 
 @pytest_asyncio.fixture
@@ -26,18 +25,30 @@ async def client(monkeypatch):
 
     # Seed categories (lifespan doesn't run under ASGITransport).
     async with AsyncSessionLocal() as db:
-        for name, ctype, icon in DEFAULT_CATEGORIES:
-            db.add(Category(name=name, type=CategoryType(ctype), icon=icon))
-        await db.commit()
+        await seed_default_categories(db)
 
-    # Deterministic AI: pretend Claude classified everything as Food.
-    async def fake_categorize(description, amount, txn_type):
-        return "Food", True
+    # Deterministic AI: "Food" whenever it's an allowed choice, otherwise undecided.
+    async def fake_suggest(*, description, amount, txn_type, allowed):
+        return ("Food", 0.9) if "Food" in allowed else None
 
-    monkeypatch.setattr(txn_routes, "categorize_transaction", fake_categorize)
+    monkeypatch.setattr(ai_categorizer, "suggest_category", fake_suggest)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
     await engine.dispose()
+
+
+async def register(client: AsyncClient, email: str = "ada@example.com", name: str = "Ada") -> dict:
+    """Register a user and return auth headers."""
+    resp = await client.post(
+        "/auth/register", json={"email": email, "password": "secret1", "name": name}
+    )
+    assert resp.status_code == 201, resp.text
+    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+
+@pytest_asyncio.fixture
+async def auth(client):
+    return await register(client)

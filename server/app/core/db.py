@@ -1,8 +1,10 @@
 """Async SQLAlchemy engine, session factory, and declarative base."""
 from __future__ import annotations
 
+import warnings
 from collections.abc import AsyncGenerator
 
+from sqlalchemy.exc import SAWarning
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -17,8 +19,12 @@ class Base(DeclarativeBase):
     """Declarative base shared by all ORM models."""
 
 
-# `future=True` is the default in SQLAlchemy 2.0; kept explicit for clarity.
-engine = create_async_engine(settings.DATABASE_URL, echo=False, future=True)
+if settings.is_sqlite:
+    # SQLite has no native DECIMAL; SQLAlchemy round-trips Numeric through float
+    # and warns about it. Postgres is the real target — keep dev logs quiet.
+    warnings.filterwarnings("ignore", message=".*does \\*not\\* support Decimal.*", category=SAWarning)
+
+engine = create_async_engine(settings.DATABASE_URL, echo=False)
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
