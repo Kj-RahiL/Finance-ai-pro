@@ -87,10 +87,10 @@ export function AccountCard({ account, onEdit, onArchive, onRestore }: AccountCa
       </p>
 
       <Link
-        href={`/transactions?account_id=${account.id}`}
+        href={`/accounts/${account.id}`}
         className="mt-3 inline-flex items-center gap-1 self-start text-xs font-medium text-fg-muted transition hover:text-accent"
       >
-        View transactions
+        View details
         <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
       </Link>
     </motion.li>

@@ -3,6 +3,7 @@ import type { TransactionFilters } from "./types";
 /** Central query-key registry so invalidation stays consistent across features. */
 export const queryKeys = {
   accounts: (includeArchived = false) => ["accounts", { includeArchived }] as const,
+  account: (id: number) => ["accounts", "detail", id] as const,
   categories: ["categories"] as const,
   transactions: {
     all: ["transactions"] as const,

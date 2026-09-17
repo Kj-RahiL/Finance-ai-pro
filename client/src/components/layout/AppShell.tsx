@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeftRight, LayoutDashboard, LogOut, Sparkles, Wallet } from "lucide-react";
+import { ArrowLeftRight, LayoutDashboard, LogOut, Settings, Sparkles, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { initials } from "@/lib/format";
@@ -16,6 +16,7 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/accounts", label: "Accounts", icon: Wallet },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function Brand({ size = "md" }: { size?: "md" | "lg" }) {
@@ -107,7 +108,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Mobile bottom tabs */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 border-t border-border bg-bg/90 px-2 pb-[env(safe-area-inset-bottom)] pt-1 backdrop-blur lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-border bg-bg/90 px-2 pb-[env(safe-area-inset-bottom)] pt-1 backdrop-blur lg:hidden"
         aria-label="Primary"
       >
         {NAV.map((item) => (

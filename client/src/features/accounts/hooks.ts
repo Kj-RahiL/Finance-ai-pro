@@ -17,6 +17,15 @@ export function useAccounts(includeArchived = false) {
   });
 }
 
+export function useAccount(id: number) {
+  return useQuery({
+    queryKey: queryKeys.account(id),
+    queryFn: () => accountsApi.get(id),
+    enabled: Number.isFinite(id) && id > 0,
+    retry: (count, err) => !(err instanceof ApiError && err.status === 404) && count < 1,
+  });
+}
+
 /** Balances change with every transaction, so every account mutation refreshes both. */
 function useInvalidateAccounts() {
   const queryClient = useQueryClient();

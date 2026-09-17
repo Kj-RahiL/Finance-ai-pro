@@ -120,11 +120,18 @@ Screens:
 - `/transactions` — search, expense/income toggle, account/category/date filters
   (all in the URL, so views are shareable), date-grouped list with daily totals,
   paging, edit / delete (tap a row on mobile)
-- `/accounts` — cards with balances, create / edit / archive / restore, deep link
-  into that account's transactions
+- `/accounts` — cards with balances, create / edit / archive / restore
+- `/accounts/[id]` — one account: balance, its transactions, add/edit/archive in place
+- `/settings` — profile, API connection status, the category set
 
 Desktop gets a sidebar; phones get a bottom tab bar. Every write shows a toast;
-destructive actions confirm first.
+destructive actions confirm first. Route-level `loading.tsx`, `error.tsx`
+(with retry), `global-error.tsx` and a branded `not-found.tsx` are in place.
+
+```bash
+npm run lint        # eslint (next/core-web-vitals + typescript)
+npm run typecheck   # tsc --noEmit
+```
 
 ---
 
