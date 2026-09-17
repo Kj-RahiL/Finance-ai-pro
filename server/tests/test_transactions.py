@@ -195,3 +195,22 @@ async def test_monthly_summary(client, auth):
     assert body["net"] == 700
     assert body["transaction_count"] == 3
     assert body["total_balance"] == 1000 - 300 - 999
+
+
+async def test_spending_by_category(client, auth):
+    cats = await _categories_by_name(client, auth)
+    for row in [
+        {"amount": 300, "description": "KFC", "date": "2026-09-01"},                                   # AI → Food
+        {"amount": 100, "description": "Uber", "date": "2026-09-02", "category_id": cats["Transport"]["id"]},
+        {"amount": 100, "description": "CNG", "date": "2026-09-03", "category_id": cats["Transport"]["id"]},
+        {"amount": 5000, "description": "Salary", "type": "income", "date": "2026-09-02"},           # ignored
+        {"amount": 999, "description": "Old", "date": "2026-08-30"},                                  # other month
+    ]:
+        assert (await client.post("/transactions", json=row, headers=auth)).status_code == 201
+
+    resp = await client.get("/dashboard/categories", params={"year": 2026, "month": 9}, headers=auth)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total_expense"] == 500
+    assert [(i["name"], i["total"], i["count"]) for i in body["items"]] == [("Food", 300, 1), ("Transport", 200, 2)]
+    assert body["items"][0]["share"] == 0.6

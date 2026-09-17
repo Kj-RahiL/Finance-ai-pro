@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { Sparkles, Trash2 } from "lucide-react";
 
-import { ApiError } from "@/lib/api-client";
-import { todayISO } from "@/lib/format";
+import { currencySymbol, todayISO } from "@/lib/format";
 import type { Transaction } from "@/lib/types";
-import { Button, ErrorBanner, FieldError, Input, Label, Select, Spinner } from "@/components/ui";
+import { Button, Field, Input, Segmented, Select } from "@/components/ui";
 import { useAccounts } from "@/features/accounts/hooks";
 import { useCategories } from "@/features/categories/hooks";
 import { useCreateTransaction, useUpdateTransaction } from "../hooks";
@@ -16,8 +16,8 @@ import { useCreateTransaction, useUpdateTransaction } from "../hooks";
 const AUTO = "auto"; // sentinel: let the AI choose
 
 const schema = z.object({
-  description: z.string().min(1, "Required").max(255),
-  amount: z.coerce.number().positive("Must be greater than 0").multipleOf(0.01, "Max 2 decimals"),
+  description: z.string().trim().min(1, "What was this for?").max(255),
+  amount: z.coerce.number({ invalid_type_error: "Enter an amount" }).positive("Must be greater than 0").multipleOf(0.01, "Max 2 decimals"),
   type: z.enum(["expense", "income"]),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a date"),
   account_id: z.coerce.number().int().positive("Pick an account"),
@@ -28,12 +28,14 @@ type FormValues = z.infer<typeof schema>;
 interface TransactionFormProps {
   /** When set, edits this transaction instead of creating one. */
   transaction?: Transaction;
-  /** Compact single-row layout for the quick-add bar. */
-  compact?: boolean;
-  onDone?: () => void;
+  /** Pre-select an account (e.g. when opened from an account page). */
+  defaultAccountId?: number;
+  /** Edit mode only: shows a Delete action (parent owns the confirm dialog). */
+  onDelete?: (txn: Transaction) => void;
+  onDone: () => void;
 }
 
-export function TransactionForm({ transaction, compact = false, onDone }: TransactionFormProps) {
+export function TransactionForm({ transaction, defaultAccountId, onDelete, onDone }: TransactionFormProps) {
   const { data: accounts = [] } = useAccounts();
   const create = useCreateTransaction();
   const update = useUpdateTransaction();
@@ -41,10 +43,11 @@ export function TransactionForm({ transaction, compact = false, onDone }: Transa
 
   const {
     register,
+    control,
     handleSubmit,
-    reset,
     watch,
     setValue,
+    setFocus,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -57,14 +60,18 @@ export function TransactionForm({ transaction, compact = false, onDone }: Transa
           account_id: transaction.account_id,
           category_id: transaction.category ? String(transaction.category.id) : AUTO,
         }
-      : { description: "", type: "expense", date: todayISO(), category_id: AUTO },
+      : { description: "", type: "expense", date: todayISO(), account_id: defaultAccountId, category_id: AUTO },
   });
 
   const type = watch("type");
+  const accountId = watch("account_id");
+  const categoryId = watch("category_id");
   const { data: categories = [] } = useCategories(type);
+  const account = accounts.find((a) => a.id === Number(accountId));
+
+  useEffect(() => setFocus("description"), [setFocus]);
 
   // Default the account once the list loads (create mode only).
-  const accountId = watch("account_id");
   useEffect(() => {
     if (!transaction && !accountId && accounts[0]) setValue("account_id", accounts[0].id);
   }, [accounts, accountId, transaction, setValue]);
@@ -89,91 +96,110 @@ export function TransactionForm({ transaction, compact = false, onDone }: Transa
       category_id,
     };
 
-    if (transaction) {
-      // Sending category_id marks the category user-confirmed (ai_suggested → false),
-      // so only send it when the user actually changed it — editing the amount alone
-      // must not erase the "AI suggested" badge.
-      const unchanged = category_id === (transaction.category?.id ?? undefined);
-      await update.mutateAsync({
-        id: transaction.id,
-        data: unchanged ? { ...payload, category_id: undefined } : payload,
-      });
-    } else {
-      await create.mutateAsync(payload);
-      reset({ description: "", type: values.type, date: values.date, account_id: values.account_id, category_id: AUTO });
+    try {
+      if (transaction) {
+        // Sending category_id marks it user-confirmed (ai_suggested → false), so only
+        // send it when the user actually changed it.
+        const unchanged = category_id === (transaction.category?.id ?? undefined);
+        await update.mutateAsync({ id: transaction.id, data: unchanged ? { ...payload, category_id: undefined } : payload });
+      } else {
+        await create.mutateAsync(payload);
+      }
+      onDone();
+    } catch {
+      /* toast shown by the mutation hook */
     }
-    onDone?.();
   }
 
-  const errorMessage = mutation.isError
-    ? mutation.error instanceof ApiError
-      ? mutation.error.message
-      : "Something went wrong"
-    : null;
-
   return (
-    <form
-      onSubmit={handleSubmit(onSubmit)}
-      className={compact ? "grid grid-cols-1 gap-3 sm:grid-cols-[1fr_7rem_7rem_9rem]" : "space-y-4"}
-      noValidate
-    >
-      <div>
-        <Label htmlFor="txn-description">Description</Label>
-        <Input id="txn-description" placeholder="e.g. KFC, Uber, bKash bill" {...register("description")} />
-        <FieldError message={errors.description?.message} />
-      </div>
-      <div>
-        <Label htmlFor="txn-amount">Amount</Label>
-        <Input id="txn-amount" type="number" step="0.01" min="0" placeholder="550" {...register("amount")} />
-        <FieldError message={errors.amount?.message} />
-      </div>
-      <div>
-        <Label htmlFor="txn-type">Type</Label>
-        <Select id="txn-type" {...register("type")}>
-          <option value="expense">Expense</option>
-          <option value="income">Income</option>
-        </Select>
-      </div>
-      <div>
-        <Label htmlFor="txn-account">Account</Label>
-        <Select id="txn-account" {...register("account_id")}>
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-        </Select>
-        <FieldError message={errors.account_id?.message} />
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+      <Controller
+        control={control}
+        name="type"
+        render={({ field }) => (
+          <Segmented
+            aria-label="Type"
+            value={field.value}
+            onChange={field.onChange}
+            options={[
+              { value: "expense", label: "Expense", tone: "danger" },
+              { value: "income", label: "Income", tone: "success" },
+            ]}
+          />
+        )}
+      />
+
+      <Field label="Description" htmlFor="txn-description" error={errors.description?.message}>
+        <Input id="txn-description" placeholder="e.g. KFC, Uber, bKash bill" autoComplete="off" {...register("description")} />
+      </Field>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Amount" htmlFor="txn-amount" error={errors.amount?.message}>
+          <Input
+            id="txn-amount"
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            placeholder="0.00"
+            leading={currencySymbol(account?.currency)}
+            className="tnum"
+            {...register("amount")}
+          />
+        </Field>
+        <Field label="Date" htmlFor="txn-date" error={errors.date?.message}>
+          <Input id="txn-date" type="date" max={todayISO()} {...register("date")} />
+        </Field>
       </div>
 
-      <div className={compact ? "sm:col-span-2" : ""}>
-        <Label htmlFor="txn-date">Date</Label>
-        <Input id="txn-date" type="date" {...register("date")} />
-        <FieldError message={errors.date?.message} />
-      </div>
-      <div className={compact ? "sm:col-span-2" : ""}>
-        <Label htmlFor="txn-category">Category</Label>
-        <Select id="txn-category" {...register("category_id")}>
-          <option value={AUTO}>✨ Auto (AI suggests)</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.icon} {c.name}
-            </option>
-          ))}
-        </Select>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Account" htmlFor="txn-account" error={errors.account_id?.message}>
+          <Select id="txn-account" {...register("account_id")}>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field
+          label="Category"
+          htmlFor="txn-category"
+          hint={categoryId === AUTO ? "AI picks one; you can change it later." : undefined}
+        >
+          <Select id="txn-category" {...register("category_id")}>
+            <option value={AUTO}>✨ Auto (AI)</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.icon} {c.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
       </div>
 
-      <div className={compact ? "sm:col-span-4 flex items-center gap-3" : "flex items-center justify-end gap-2"}>
-        {!compact && (
-          <Button type="button" variant="ghost" onClick={onDone}>
-            Cancel
+      <div className="flex items-center justify-end gap-2 pt-2">
+        {transaction && onDelete && (
+          <Button type="button" variant="danger" className="mr-auto" onClick={() => onDelete(transaction)}>
+            <Trash2 className="h-4 w-4" />
+            Delete
           </Button>
         )}
-        <Button type="submit" disabled={mutation.isPending} className="flex items-center justify-center gap-2">
-          {mutation.isPending && <Spinner className="h-4 w-4" />}
-          {mutation.isPending ? "Categorizing…" : transaction ? "Save changes" : "Add transaction"}
+        <Button type="button" variant="ghost" onClick={onDone}>
+          Cancel
         </Button>
-        <ErrorBanner message={errorMessage} />
+        <Button type="submit" loading={mutation.isPending}>
+          {mutation.isPending && categoryId === AUTO && !transaction ? (
+            "Categorizing…"
+          ) : transaction ? (
+            "Save changes"
+          ) : (
+            <>
+              <Sparkles className="h-4 w-4" />
+              Add transaction
+            </>
+          )}
+        </Button>
       </div>
     </form>
   );

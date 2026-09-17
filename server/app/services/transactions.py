@@ -16,7 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import NotFoundError
 from app.models.account import Account
 from app.models.transaction import Transaction, TransactionType
-from app.schemas.dashboard import MonthlySummary
+from app.models.category import Category
+from app.schemas.dashboard import CategoryBreakdown, CategorySpend, MonthlySummary
 from app.schemas.transaction import TransactionCreate, TransactionFilters, TransactionUpdate
 from app.services import accounts as account_service
 from app.services import categories as category_service
@@ -189,4 +190,51 @@ async def monthly_summary(
         net=float(income - expense),
         transaction_count=count,
         total_balance=float(Decimal(str(total_balance or 0))),
+    )
+
+
+async def spending_by_category(
+    db: AsyncSession, user_id: int, *, year: int, month: int
+) -> CategoryBreakdown:
+    """Expense totals per category for a month, largest first."""
+    start, end = _month_bounds(year, month)
+    stmt = (
+        select(
+            Transaction.category_id,
+            Category.name,
+            Category.icon,
+            func.count(Transaction.id),
+            func.sum(Transaction.amount),
+        )
+        .join(Account, Transaction.account_id == Account.id)
+        .outerjoin(Category, Transaction.category_id == Category.id)
+        .where(
+            Account.user_id == user_id,
+            Transaction.type == TransactionType.expense,
+            Transaction.date >= start,
+            Transaction.date < end,
+        )
+        .group_by(Transaction.category_id, Category.name, Category.icon)
+        .order_by(func.sum(Transaction.amount).desc())
+    )
+    rows = [
+        (cid, name or "Uncategorized", icon or "❓", n, Decimal(str(total or 0)))
+        for cid, name, icon, n, total in await db.execute(stmt)
+    ]
+    total_expense = sum((r[4] for r in rows), Decimal("0"))
+    return CategoryBreakdown(
+        year=year,
+        month=month,
+        total_expense=float(total_expense),
+        items=[
+            CategorySpend(
+                category_id=cid,
+                name=name,
+                icon=icon,
+                total=float(total),
+                count=n,
+                share=float(total / total_expense) if total_expense else 0.0,
+            )
+            for cid, name, icon, n, total in rows
+        ],
     )

@@ -2,22 +2,56 @@
 @tailwind components;
 @tailwind utilities;
 
-html,
-body {
-  height: 100%;
+/* Dark-first palette. HSL triples so Tailwind can apply alpha (see tailwind.config.ts). */
+:root {
+  --bg: 224 40% 5%;
+  --surface: 224 32% 8%;
+  --surface-2: 224 28% 11%;
+  --surface-3: 224 24% 15%;
+  --border: 224 20% 17%;
+  --border-strong: 224 18% 26%;
+  --fg: 210 40% 96%;
+  --fg-muted: 215 18% 62%;
+  --fg-subtle: 215 15% 45%;
+  --accent: 243 80% 66%;
+  --accent-fg: 0 0% 100%;
+  --success: 158 70% 48%;
+  --danger: 350 85% 64%;
+  --warning: 38 92% 55%;
 }
 
-body {
-  @apply bg-slate-950 text-slate-100 antialiased;
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    @apply bg-bg text-fg antialiased;
+    background-image:
+      radial-gradient(70rem 50rem at 110% -20%, hsl(var(--accent) / 0.12), transparent 60%),
+      radial-gradient(50rem 40rem at -20% 120%, hsl(var(--success) / 0.08), transparent 60%);
+    background-attachment: fixed;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  ::selection {
+    @apply bg-accent/40;
+  }
+  /* Thin, theme-matched scrollbars (WebKit). */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-surface-3;
+    border: 2px solid hsl(var(--bg));
+  }
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+  }
 }
 
-/* Subtle app-wide background gradient. */
-body {
-  background-image: radial-gradient(
-      60rem 60rem at 110% -10%,
-      rgba(79, 70, 229, 0.15),
-      transparent 60%
-    ),
-    radial-gradient(50rem 50rem at -10% 110%, rgba(16, 185, 129, 0.1), transparent 60%);
-  background-attachment: fixed;
+@layer utilities {
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
 }

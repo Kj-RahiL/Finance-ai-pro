@@ -29,7 +29,7 @@ Finance-ai-pro/
 | Backend   | Python 3.11+, FastAPI, SQLAlchemy 2.0 (async, `asyncpg`), Alembic, PyJWT, bcrypt |
 | AI        | Anthropic Claude via the `anthropic` SDK 1.x (structured outputs) |
 | Database  | Postgres 16 (Docker) — or zero-install SQLite fallback |
-| Frontend  | Next.js 15, TypeScript, Tailwind CSS, Framer Motion, TanStack Query, Zustand, React Hook Form + Zod |
+| Frontend  | Next.js 15, TypeScript, Tailwind CSS (semantic tokens), lucide-react, sonner, Framer Motion, TanStack Query, Zustand, React Hook Form + Zod |
 
 ## Prerequisites
 
@@ -93,7 +93,7 @@ uvicorn app.main:app --reload
 pytest
 ```
 
-22 tests run the whole API against an isolated SQLite DB with the AI call
+29 tests run the whole API against an isolated SQLite DB with the AI call
 stubbed — no network or API key needed. They cover auth, account CRUD +
 archive, balance bookkeeping on create/update/delete, AI vs. explicit vs.
 fallback categories, filters/pagination, per-user isolation, and the summary.
@@ -110,12 +110,21 @@ npm run dev
 ```
 
 Open <http://localhost:3000> → register → you land on the **Dashboard**.
-Quick-add an expense like **KFC / 550** → it appears categorized **Food** with
-the **✨ AI suggested** badge. Click **Edit** on any transaction to correct the
-category — the badge disappears because the category is now user-confirmed.
+**Add transaction** → describe it like **KFC / 550** → it appears filed under **Food**
+with a **✨ sparkle** on the category chip meaning "AI suggested". Click that chip
+to pick a different category — one click, saved, sparkle gone (user-confirmed).
 
-Screens: `/dashboard` (month summary, quick add, accounts, recent),
-`/transactions` (filters, paging, edit/delete), `/accounts` (create, edit, archive).
+Screens:
+- `/dashboard` — month navigator (← Sept 2026 →), KPI tiles (balance / income /
+  expense / net), spending-by-category bars, accounts, recent activity
+- `/transactions` — search, expense/income toggle, account/category/date filters
+  (all in the URL, so views are shareable), date-grouped list with daily totals,
+  paging, edit / delete (tap a row on mobile)
+- `/accounts` — cards with balances, create / edit / archive / restore, deep link
+  into that account's transactions
+
+Desktop gets a sidebar; phones get a bottom tab bar. Every write shows a toast;
+destructive actions confirm first.
 
 ---
 
@@ -199,6 +208,7 @@ high-volume classification, `claude-haiku-4-5` is cheaper and plenty capable.
 | PATCH  | `/transactions/{id}`       | Partial update (rebalances accounts) |
 | DELETE | `/transactions/{id}`       | Delete (restores balance) |
 | GET    | `/dashboard/summary`       | Income / expense / net for a month + total balance |
+| GET    | `/dashboard/categories`    | Expense total per category for a month, with share (`year`, `month`) |
 | GET    | `/health`                  | Liveness check |
 
 All routes except `/auth/*` and `/health` need `Authorization: Bearer <token>`.
@@ -220,10 +230,14 @@ server/app/
 client/src/
 ├── app/(auth)/      # /login, /register
 ├── app/(app)/       # auth-guarded: /dashboard, /transactions, /accounts
-├── components/ui    # shared primitives (Button, Input, Modal, Badge…)
-├── components/layout/AppShell.tsx
-├── features/<name>/ # api.ts + hooks.ts + components/ per feature
-└── lib/             # api-client, types (mirror server schemas), format, query-keys
+├── components/ui    # design-system primitives: button, input/field/select, segmented,
+│                    # card, badge, modal + confirm dialog, stat tile, skeleton/empty states
+├── components/layout/AppShell.tsx   # sidebar (desktop) + bottom tabs (mobile)
+├── features/<name>/ # api.ts + hooks.ts (queries, mutations, toasts) + components/
+└── lib/             # api-client, types (mirror server schemas), format (৳, dates), query-keys, cn()
+
+Design tokens live in `globals.css` as HSL triples (`--bg`, `--surface`, `--accent`, …)
+and are exposed through `tailwind.config.ts` (`bg-surface-2`, `text-fg-muted`, `border-border`).
 ```
 
 ---

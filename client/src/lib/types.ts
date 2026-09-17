@@ -95,3 +95,20 @@ export interface MonthlySummary {
   transaction_count: number;
   total_balance: number;
 }
+
+export interface CategorySpend {
+  category_id: number | null;
+  name: string;
+  icon: string;
+  total: number;
+  count: number;
+  /** Share of the month's expenses, 0–1. */
+  share: number;
+}
+
+export interface CategoryBreakdown {
+  year: number;
+  month: number;
+  total_expense: number;
+  items: CategorySpend[];
+}

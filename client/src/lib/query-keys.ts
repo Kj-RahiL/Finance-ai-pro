@@ -8,5 +8,9 @@ export const queryKeys = {
     all: ["transactions"] as const,
     list: (filters: TransactionFilters) => ["transactions", "list", filters] as const,
   },
-  summary: (year?: number, month?: number) => ["dashboard", "summary", { year, month }] as const,
+  dashboard: {
+    all: ["dashboard"] as const,
+    summary: (year: number, month: number) => ["dashboard", "summary", { year, month }] as const,
+    categories: (year: number, month: number) => ["dashboard", "categories", { year, month }] as const,
+  },
 };
